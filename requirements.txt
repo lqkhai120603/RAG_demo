@@ -4,3 +4,5 @@ huggingface_hub[hf-xet]
 hf-xet
 sentence-transformers
 gradio
+dotenv
+google-generativeai
