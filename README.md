@@ -30,3 +30,4 @@ To start the demo:
 ```bash
 python app.py
 ```
+When the URL ```http://127.0.0.1:7860``` appears, click on it to run the demo.
