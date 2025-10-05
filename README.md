@@ -1,11 +1,11 @@
 # RAG_demo
 This is the repository for the demo of RAG (Retrieval-Augmented Generation).
 ## Installation
-Set up the virtual environment
+Set up the virtual environment (Optional)
 ```bash
 python -m venv rag_env
 ```
-Activate the created virtual environment
+Activate the created virtual environment (If the first step has been done)
 ```bash
 # Windows
 rag_env/Scripts/activate

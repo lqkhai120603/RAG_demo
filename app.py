@@ -10,6 +10,10 @@ import atexit
 # Load environment variables from .env
 load_dotenv()
 
+# Constants for chunking
+CHUNK_SIZE = 512 
+CHUNK_OVERLAP = 50
+
 # Set up LLM
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 llm = genai.GenerativeModel(model_name="gemini-2.0-flash")
@@ -43,6 +47,53 @@ Query: {query}
 Answer: 
 """
 
+# Chunking received text
+def recursive_character_splitter(text, chunk_size, chunk_overlap):
+    """Splits text into overlapping chunks based on common separators."""
+    if not text:
+        return []
+
+    separators = ["\n\n", "\n", ". ", " ", ""]
+    chunks = [text]
+    
+    # Simple recursive splitting
+    for separator in separators:
+        new_chunks = []
+        for chunk in chunks:
+            # If a chunk is larger than the desired size, split it further
+            if len(chunk) > chunk_size:
+                parts = chunk.split(separator)
+                temp_chunk = ""
+                for part in parts:
+                    if len(temp_chunk) + len(part) + len(separator) <= chunk_size:
+                        temp_chunk += part + separator
+                    else:
+                        if temp_chunk:
+                            new_chunks.append(temp_chunk.strip())
+                        temp_chunk = part + separator
+                if temp_chunk:
+                    new_chunks.append(temp_chunk.strip())
+            else:
+                new_chunks.append(chunk.strip())
+        
+        chunks = new_chunks
+        
+        # Apply overlap correction (simplified: only takes effect if the chunking reduced size)
+        if all(len(c) <= chunk_size for c in chunks):
+            final_chunks = []
+            for i, chunk in enumerate(chunks):
+                if i > 0 and chunk_overlap > 0:
+                    # Append a small overlapping tail from the previous chunk
+                    overlap_text = chunks[i-1][-chunk_overlap:]
+                    final_chunks.append(overlap_text + chunk)
+                else:
+                    final_chunks.append(chunk)
+            
+            # Remove duplicates and ensure chunks are reasonable size
+            return [c for c in final_chunks if len(c) > 10]
+
+    return chunks
+
 # Answer a question using RAG
 def answer(query, top_k=3, threshold=0.4):
     cur = conn.cursor()
@@ -69,38 +120,30 @@ def answer(query, top_k=3, threshold=0.4):
         return "No relevant information was found."
 
 # Add document to database
-def add_document(document, threshold=0.4):
+def add_document(document):
     cur = conn.cursor()
     try:
         if not document.strip():
             return "Document cannot be empty."
-        emb = embed_model.encode(
-            [document],
-            convert_to_tensor=False,
-            show_progress_bar=False
-        )[0].tolist()
-        # Check if similar content already exists
-        cur.execute("""
-            SELECT content, embedding <=> %s::vector AS distance
-            FROM documents
-            ORDER BY distance ASC
-            LIMIT 1
-        """, (emb,))
-        result = cur.fetchone()
-
-        if result:
-            existing_content, distance = result
-            if distance <= threshold:
-                print(f"Similar content already exists: '{existing_content}' (distance={distance:.3f})")
-                return f"Similar content is already registered (distance={distance:.3f})"
-
-        # Save to DB
-        cur.execute(
-            "INSERT INTO documents (content, embedding) VALUES (%s, %s::vector)",
-            (document, emb)
-        )
+        chunks = recursive_character_splitter(document, CHUNK_SIZE, CHUNK_OVERLAP)
+        if not chunks:
+            return "Document was too short or improperly formatted to create chunks."
+        total_chunks_added = 0
+        for chunk in chunks:
+            # Encode the chunk
+            emb = embed_model.encode(
+                [chunk],
+                convert_to_tensor=False,
+                show_progress_bar=False
+            )[0].tolist()
+            # Save to DB
+            cur.execute(
+                "INSERT INTO documents (content, embedding) VALUES (%s, %s::vector)",
+                (chunk, emb)
+            )
+            total_chunks_added += 1
         conn.commit()
-        return "Document added to the database!"
+        return f"Document added to the database as {total_chunks_added} chunks!"
     except Exception as e:
         conn.rollback()
         return f"Error: {e}"
